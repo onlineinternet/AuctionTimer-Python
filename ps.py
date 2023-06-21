@@ -1,89 +1,83 @@
 #!/usr/bin/python3
-import time,os,sys,glob,tty,termios
-
+import time, os, sys, tty, termios
 import simpleaudio as sa
 from select import select
-from itertools import count
-from evdev import InputDevice, categorize, ecodes
 
-#gamepad = InputDevice('/dev/input/eventX') # modify this for your controller
-#inputs = [gamepad]
-#aBtn = 304 #A button mapped to G keyboard
-
-aBtn = ecodes.KEY_B
-
-total_bids = 30 # we use this number more than once, so name it
-
-def getInput():
-    if select(inputs, [], []) == (inputs, [] ,[]):
-        print("before read_one")
-        event = gamepad.read_one()
-        print("after read_one")
-        if event.type == ecodes.EV_KEY and event.value > 0:
-            return event.code
-    return None
-#end getInput
-
+# Function to read a single character from stdin without waiting for the Enter key
 def getKey():
-    if select([sys.stdin], [], [], 0) == ([sys.stdin], [] ,[]):
-        return sys.stdin.read(1) # return a single byte (usually a valid ASCII character) from stdin
+    if select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+        return sys.stdin.read(1)
 
-try:
-    # state variables for our script
-    done = False
-    bid = 0
-    ticktock = 0
-    timestamp = time.time()
-    bidtimer = 0.0
-    elapsed = 0
-    
-    # terminal munging
-    old_settings = termios.tcgetattr(sys.stdin)                  # terminal munging - save terminal settings they way we found them
+# Function to load bid, tick-tock, and sold sounds into WaveObjects
+def load_sounds():
+    bids = [sa.WaveObject.from_wave_file(f'assets/bid{str(i).zfill(3)}.wav') for i in range(1, 31)]
+    tick_tock_sounds = [sa.WaveObject.from_wave_file(f'assets/{name}.wav') for name in ['tick', 'tock']]
+    sold_sound = sa.WaveObject.from_wave_file("assets/sold.wav")
+    return bids, tick_tock_sounds, sold_sound
+
+# Function to set the terminal to non-blocking mode and save the current terminal settings
+def set_terminal_mode():
+    old_settings = termios.tcgetattr(sys.stdin)
     tty.setcbreak(sys.stdin.fileno())
+    return old_settings
 
-    ticks = [sa.WaveObject.from_wave_file(f'assets/%s.wav'%i) for i in ['tick','tock', 'tick', 'sold']]
-    #ticks.append(False) # end list with our stopper
-    soldwav = sa.WaveObject.from_wave_file('assets/sold.wav')
-    bids = [sa.WaveObject.from_wave_file(f'assets/bid%.3i.wav'%i) for i in range(1,total_bids)]
+# Function to restore the original terminal settings
+def restore_terminal_mode(old_settings):
+    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
-    #sa.WaveObject.from_wave_file('assets/start.wav').play()
+def main():
+    old_terminal_settings = set_terminal_mode()
+    bids, tick_tock_sounds, sold_sound = load_sounds()
+    total_bids = 30
 
-    # main program 'event' loop
-    while done == False:
-        elapsed = time.time() - timestamp;
-        timestamp = time.time()
-        #key = getInput()                        # fetch an input value
-        key = getKey()                          # fetch an input value
-        if key == 'b': #aBtn:
-            bid = bid + 1
-            ticktock = 0
-            bids[bid].play()
-        elif key == 'q':
-            break
-        # end if-key-is-abtn
-        
-        #print("bid: ",bid,", elapsed: ", elapsed, "ticktock: ",ticktock)
-        if bid:
-            bidtimer = bidtimer + elapsed
-            if bidtimer >= 1.1: # the .3 adds some 'jitter'
-                if ticktock < len(ticks):
-                    ticks[ticktock].play()
-                    ticktock = ticktock + 1
-                else:
-                    bid = 0
-                bidtimer = 0.0
-            # end if-bid-timer-gt-1.0
+    bid = 0
+    tick_tock_index = 0
+    bid_timer = 0.0
+    last_timestamp = time.time()
+    done = False
 
-            if bid == total_bids:
-                bid = 0
-                bidtimer = 0.0
-                ticktock = 0
-            # end if-bid-is-30
-        
-        # end if-bid
+    try:
+        # Main event loop
+        while not done:
+            # Calculate elapsed time since the last iteration
+            elapsed = time.time() - last_timestamp
+            last_timestamp = time.time()
 
-    #end while-not-done
-finally:
-    print()
-    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings) # undo terminal munging: restore original console settings
+            # Get the user's input
+            key = getKey()
 
+            # Process user input
+            if key == 'b':
+                # If a tick or tock sound is playing, reset tick_tock_index
+                if tick_tock_index > 0:
+                    tick_tock_index = 0
+
+                # Increment the bid count and play the corresponding bid sound
+                bid = (bid + 1) % total_bids
+                bids[bid].play()
+
+            # Exit the loop if the user presses 'q'
+            elif key == 'q':
+                done = True
+
+            # Update the bid timer and play tick-tock sounds
+            if bid:
+                bid_timer += elapsed
+                if bid_timer >= 1.1:
+                    if tick_tock_index < len(tick_tock_sounds):
+                        tick_tock_sounds[tick_tock_index].play()
+                        tick_tock_index += 1
+                    else:
+                        # Play the "sold" sound and reset bid and tick_tock_index
+                        sold_sound.play()
+                        bid = 0
+                        tick_tock_index = 0
+
+                    # Reset the bid timer
+                    bid_timer = 0.0
+    finally:
+        # Restore the original terminal settings upon exiting the loop
+        restore_terminal_mode(old_terminal_settings)
+
+if __name__ == "__main__":
+    main()
